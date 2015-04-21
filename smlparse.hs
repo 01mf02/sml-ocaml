@@ -1,13 +1,15 @@
 module SMLParse (program) where
 
-import Control.Applicative ((<$>), (<|>), optional)
+import Control.Applicative ((<$>))
 import Control.Monad (liftM)
-import Data.Attoparsec.ByteString.Char8
 import Data.List (intercalate)
+import Text.Parsec
 
 
 class ToOcaml a where
   toOcaml :: a -> String
+
+type Parser = Parsec String ()
 
 -- -----------------------------------------------------------------------------
 -- Programs and Modules
@@ -20,7 +22,7 @@ instance ToOcaml Program where
 
 program :: Parser Program
 program = liftM Program $
-  many1 (topLevelDeclaration >>= \ d -> char ';' >> skipSpace >> return d)
+  many1 (topLevelDeclaration >>= \ d -> char ';' >> spaces >> return d)
 
 
 data TopLevelDeclaration = Exp Expression | ObjDecl ObjectDeclaration
@@ -31,8 +33,9 @@ instance ToOcaml TopLevelDeclaration where
 
 topLevelDeclaration :: Parser TopLevelDeclaration
 topLevelDeclaration =
-  liftM Exp expression <|>
-  liftM ObjDecl objectDeclaration
+      liftM Exp expression
+  <|> liftM ObjDecl objectDeclaration
+  <?> "top level declaration"
 
 
 data ObjectDeclaration = Decl Declaration
@@ -59,15 +62,16 @@ newtype IsRec = IsRec Bool deriving Show
 
 valDeclaration :: Parser VariableDeclaration
 valDeclaration =
-  option (IsRec False) (string "rec" >> sp >> return (IsRec True)) >>= \ rec ->
-  pattrn >>= \ pat -> sp >> char '=' >> sp >>
-  expression >>= \ e -> sp >>
+  option (IsRec False) (string "rec" >> sp1 >> return (IsRec True)) >>= \ rec ->
+  pattrn >>= \ pat -> sp1 >>
+  char '=' >> sp1 >>
+  expression >>= \ e ->
   return (VariableDeclaration (rec, pat, e))
 
 valDeclarations :: Parser [VariableDeclaration]
 valDeclarations =
-  string "val" >> sp >> valDeclaration >>= \ d ->
-  many' (string "and" >> sp >> valDeclaration) >>= \ ds ->
+  string "val" >> sp1 >> dropSpacesAfter valDeclaration >>= \ d ->
+  many (string "and" >> sp1 >> dropSpacesAfter valDeclaration) >>= \ ds ->
   return $ d : ds
 
 
@@ -107,16 +111,17 @@ instance ToOcaml AtomicExpression where
 
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
-  liftM ConstExp constant <|>
-  liftM TupleExp    tuple <|>
-  liftM  ListExp     list
+      liftM ConstExp constant
+  <|> liftM TupleExp    tuple
+  <|> liftM  ListExp     list
+  <?> "atomic expression"
   where
     tuple = char '(' >> expList >>= \ e -> char ')' >> return e
     list  = char '[' >> expList >>= \ e -> char ']' >> return e
 
 expList :: Parser [Expression]
 expList = expression >>= \ e ->
-  many' (char ',' >> expression) >>= \ es ->
+  many (char ',' >> expression) >>= \ es ->
   return $ e : es
 
 
@@ -133,16 +138,18 @@ data AtomicPattern = AnyPattern
   deriving Show
 
 atomicPattern :: Parser AtomicPattern
-atomicPattern = char '_' >> sp >> return AnyPattern
+atomicPattern = char '_' >> return AnyPattern
 
 
 -- -----------------------------------------------------------------------------
 -- Lexical Matters: Identifiers, Constants, Comments
 
 data Constant =
-    NumConst (Numeral, Maybe Digits, Maybe Numeral)
+    NumConst NumericConstant
   | StrConst String
   deriving Show
+
+type NumericConstant = (Numeral, Maybe Digits, Maybe Numeral)
 
 type Digits = String
 
@@ -152,18 +159,25 @@ instance ToOcaml Constant where
   toOcaml (StrConst s) = show s
 
 constant :: Parser Constant
-constant = liftM NumConst numConst <|> liftM StrConst strConst where
-  numConst =
-    numeral >>= \ n ->
-    optional (char '.' >> many1 digit) >>= \ d ->
-    optional (char 'E' >> numeral) >>= \ e ->
-    return (n, d, e)
+constant =
+      liftM NumConst numericConstant
+  <|> liftM StrConst stringConstant
+  <?> "constant"
 
-  strConst =
-    char '"' >>
-    many' (satisfy (\ c -> c /= '\\' && c /= '"')) >>= \ s ->
-    char '"' >>
-    return s
+
+numericConstant :: Parser NumericConstant
+numericConstant =
+  numeral >>= \ n ->
+  optionMaybe (char '.' >> many1 digit) >>= \ d ->
+  optionMaybe (char 'E' >> numeral) >>= \ e ->
+  return (n, d, e)
+
+stringConstant :: Parser String
+stringConstant =
+  char '"' >>
+  many (noneOf ['\\', '"']) >>= \ s ->
+  char '"' >>
+  return s
 
 
 newtype Numeral = Numeral (NumeralSign, String) deriving Show
@@ -182,7 +196,7 @@ instance ToOcaml NumeralSign where
   toOcaml NegSign = "-"
 
 numeralSign :: Parser NumeralSign
-numeralSign = option PosSign (char '~' >> skipSpace >> return NegSign)
+numeralSign = option PosSign (char '~' >> spaces >> return NegSign)
 
 
 typeVar :: Parser String
@@ -194,15 +208,15 @@ typeVar =
 
 -- TODO: Clarify ' in syntax!
 ident :: Parser String
-ident = many1 (satisfy $ inClass "!%&$#+-/:<=>?@\\~'^|*") <|> alphanumericIdent
+ident = many1 (oneOf "!%&$#+-/:<=>?@\\~'^|*") <|> alphanumericIdent
 
 alphanumericIdent :: Parser String
 alphanumericIdent = letter >>= \ l ->
-  many' (letter <|> digit <|> char '_' <|> char '\'') >>= \ ls ->
+  many (letter <|> digit <|> char '_' <|> char '\'') >>= \ ls ->
   return $ l : ls
 
-letter :: Parser Char
-letter = letter_ascii
+sp1 :: Parser String
+sp1 = many1 space
 
-sp :: Parser String
-sp = many1 space
+dropSpacesAfter :: Parser a -> Parser a
+dropSpacesAfter p = p >>= \ x -> spaces >> return x
