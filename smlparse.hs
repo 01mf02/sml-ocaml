@@ -21,8 +21,7 @@ instance ToOcaml Program where
   toOcaml (Program decls) = concat $ map ((++ ";;") . toOcaml) decls
 
 program :: Parser Program
-program = liftM Program $
-  many1 (topLevelDeclaration >>= \ d -> char ';' >> spaces >> return d)
+program = liftM Program $ topLevelDeclaration `endBy1` (char ';' >> spaces)
 
 
 data TopLevelDeclaration = Exp Expression | ObjDecl ObjectDeclaration
@@ -30,6 +29,7 @@ data TopLevelDeclaration = Exp Expression | ObjDecl ObjectDeclaration
 
 instance ToOcaml TopLevelDeclaration where
   toOcaml (Exp e) = toOcaml e
+  toOcaml (ObjDecl d) = toOcaml d
 
 topLevelDeclaration :: Parser TopLevelDeclaration
 topLevelDeclaration =
@@ -41,6 +41,9 @@ topLevelDeclaration =
 data ObjectDeclaration = Decl Declaration
   deriving Show
 
+instance ToOcaml ObjectDeclaration where
+  toOcaml (Decl d) = toOcaml d
+
 objectDeclaration :: Parser ObjectDeclaration
 objectDeclaration = liftM Decl declaration
 
@@ -48,15 +51,25 @@ objectDeclaration = liftM Decl declaration
 -- -----------------------------------------------------------------------------
 -- Declarations
 
-data Declaration = ValDecl [VariableDeclaration]
+data Declaration = ValDecls [VariableDeclaration]
   deriving Show
 
-declaration :: Parser Declaration
-declaration = liftM ValDecl valDeclarations
+instance ToOcaml Declaration where
+  toOcaml (ValDecls ds) = "let " ++ intercalate " and " (map toOcaml ds)
 
+declaration :: Parser Declaration
+declaration = liftM ValDecls valDeclarations
+
+valDeclarations :: Parser [VariableDeclaration]
+valDeclarations =
+  string "val" >> (sp1 >> dropSpacesAfter valDeclaration) `sepBy1` string "and"
 
 newtype VariableDeclaration = VariableDeclaration (IsRec, Pattern, Expression)
   deriving Show
+
+instance ToOcaml VariableDeclaration where
+  toOcaml (VariableDeclaration (IsRec r, p, e)) =
+    unwords $ (if r then ["rec"] else []) ++ [toOcaml p, "=", toOcaml e]
 
 newtype IsRec = IsRec Bool deriving Show
 
@@ -68,11 +81,6 @@ valDeclaration =
   expression >>= \ e ->
   return (VariableDeclaration (rec, pat, e))
 
-valDeclarations :: Parser [VariableDeclaration]
-valDeclarations =
-  string "val" >> sp1 >> dropSpacesAfter valDeclaration >>= \ d ->
-  many (string "and" >> sp1 >> dropSpacesAfter valDeclaration) >>= \ ds ->
-  return $ d : ds
 
 
 -- -----------------------------------------------------------------------------
@@ -112,17 +120,12 @@ instance ToOcaml AtomicExpression where
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
       liftM ConstExp constant
-  <|> liftM TupleExp    tuple
-  <|> liftM  ListExp     list
+  <|> liftM TupleExp (expList `encloseBy` ('(', ')'))
+  <|> liftM  ListExp (expList `encloseBy` ('[', ']'))
   <?> "atomic expression"
-  where
-    tuple = char '(' >> expList >>= \ e -> char ')' >> return e
-    list  = char '[' >> expList >>= \ e -> char ']' >> return e
 
 expList :: Parser [Expression]
-expList = expression >>= \ e ->
-  many (char ',' >> expression) >>= \ es ->
-  return $ e : es
+expList = expression `sepBy1` (spaces >> char ',' >> spaces)
 
 
 -- -----------------------------------------------------------------------------
@@ -131,11 +134,17 @@ expList = expression >>= \ e ->
 data Pattern = AtomicPat AtomicPattern
   deriving Show
 
+instance ToOcaml Pattern where
+  toOcaml (AtomicPat p) = toOcaml p
+
 pattrn :: Parser Pattern
 pattrn = liftM AtomicPat atomicPattern
 
 data AtomicPattern = AnyPattern
   deriving Show
+
+instance ToOcaml AtomicPattern where
+  toOcaml AnyPattern = "_"
 
 atomicPattern :: Parser AtomicPattern
 atomicPattern = char '_' >> return AnyPattern
@@ -208,15 +217,25 @@ typeVar =
 
 -- TODO: Clarify ' in syntax!
 ident :: Parser String
-ident = many1 (oneOf "!%&$#+-/:<=>?@\\~'^|*") <|> alphanumericIdent
+ident =
+      many1 (oneOf "!%&$#+-/:<=>?@\\~'^|*")
+  <|> alphanumericIdent
+  <?> "identifier"
 
 alphanumericIdent :: Parser String
 alphanumericIdent = letter >>= \ l ->
   many (letter <|> digit <|> char '_' <|> char '\'') >>= \ ls ->
   return $ l : ls
 
+
+-- -----------------------------------------------------------------------------
+-- Parser combinators
+
 sp1 :: Parser String
 sp1 = many1 space
 
 dropSpacesAfter :: Parser a -> Parser a
 dropSpacesAfter p = p >>= \ x -> spaces >> return x
+
+encloseBy :: Parser a -> (Char, Char) -> Parser a
+p `encloseBy` (s, e) = char s >> p >>= \ x -> char e >> return x
