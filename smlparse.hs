@@ -4,6 +4,9 @@ import Control.Applicative ((<$>))
 import Control.Monad (liftM)
 import Data.List (intercalate)
 import Text.Parsec
+import qualified Text.Parsec.Token as T
+
+import Language (smlDef)
 
 
 class ToOcaml a where
@@ -21,7 +24,7 @@ instance ToOcaml Program where
   toOcaml (Program decls) = concat $ map ((++ ";;") . toOcaml) decls
 
 program :: Parser Program
-program = liftM Program $ topLevelDeclaration `endBy1` (char ';' >> spaces)
+program = liftM Program $ topLevelDeclaration `endBy1` semi
 
 
 data TopLevelDeclaration = Exp Expression | ObjDecl ObjectDeclaration
@@ -61,8 +64,7 @@ declaration :: Parser Declaration
 declaration = liftM ValDecls valDeclarations
 
 valDeclarations :: Parser [VariableDeclaration]
-valDeclarations =
-  string "val" >> (sp1 >> dropSpacesAfter valDeclaration) `sepBy1` string "and"
+valDeclarations = reserved "val" >> valDeclaration `sepBy1` reserved "and"
 
 newtype VariableDeclaration = VariableDeclaration (IsRec, Pattern, Expression)
   deriving Show
@@ -75,9 +77,9 @@ newtype IsRec = IsRec Bool deriving Show
 
 valDeclaration :: Parser VariableDeclaration
 valDeclaration =
-  option (IsRec False) (string "rec" >> sp1 >> return (IsRec True)) >>= \ rec ->
-  pattrn >>= \ pat -> sp1 >>
-  char '=' >> sp1 >>
+  (IsRec <$> option False (reserved "rec" >> return True)) >>= \ rec ->
+  pattrn >>= \ pat ->
+  reservedOp "=" >>
   expression >>= \ e ->
   return (VariableDeclaration (rec, pat, e))
 
@@ -120,12 +122,9 @@ instance ToOcaml AtomicExpression where
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
       liftM ConstExp constant
-  <|> liftM TupleExp (expList `encloseBy` ('(', ')'))
-  <|> liftM  ListExp (expList `encloseBy` ('[', ']'))
+  <|> liftM TupleExp (parens   $ commaSep expression)
+  <|> liftM  ListExp (brackets $ commaSep expression)
   <?> "atomic expression"
-
-expList :: Parser [Expression]
-expList = expression `sepBy1` (spaces >> char ',' >> spaces)
 
 
 -- -----------------------------------------------------------------------------
@@ -147,7 +146,7 @@ instance ToOcaml AtomicPattern where
   toOcaml AnyPattern = "_"
 
 atomicPattern :: Parser AtomicPattern
-atomicPattern = char '_' >> return AnyPattern
+atomicPattern = reservedOp "_" >> return AnyPattern
 
 
 -- -----------------------------------------------------------------------------
@@ -170,24 +169,16 @@ instance ToOcaml Constant where
 constant :: Parser Constant
 constant =
       liftM NumConst numericConstant
-  <|> liftM StrConst stringConstant
+  <|> liftM StrConst (T.stringLiteral lexer)
   <?> "constant"
 
 
 numericConstant :: Parser NumericConstant
-numericConstant =
+numericConstant = lexeme $
   numeral >>= \ n ->
   optionMaybe (char '.' >> many1 digit) >>= \ d ->
   optionMaybe (char 'E' >> numeral) >>= \ e ->
   return (n, d, e)
-
-stringConstant :: Parser String
-stringConstant =
-  char '"' >>
-  many (noneOf ['\\', '"']) >>= \ s ->
-  char '"' >>
-  return s
-
 
 newtype Numeral = Numeral (NumeralSign, String) deriving Show
 
@@ -205,37 +196,49 @@ instance ToOcaml NumeralSign where
   toOcaml NegSign = "-"
 
 numeralSign :: Parser NumeralSign
-numeralSign = option PosSign (char '~' >> spaces >> return NegSign)
+numeralSign = option PosSign (reservedOp "~" >> return NegSign)
 
 
 typeVar :: Parser String
-typeVar =
+typeVar = lexeme $
   many1 (char '\'') >>= \ a ->
   option "" (char '_' >> return "_") >>= \ u ->
   alphanumericIdent >>= \ i ->
   return $ a ++ u ++ i
 
--- TODO: Clarify ' in syntax!
 ident :: Parser String
 ident =
-      many1 (oneOf "!%&$#+-/:<=>?@\\~'^|*")
+      T.operator lexer
   <|> alphanumericIdent
   <?> "identifier"
 
 alphanumericIdent :: Parser String
-alphanumericIdent = letter >>= \ l ->
-  many (letter <|> digit <|> char '_' <|> char '\'') >>= \ ls ->
-  return $ l : ls
+alphanumericIdent = T.identifier lexer
 
 
 -- -----------------------------------------------------------------------------
--- Parser combinators
+-- Parsec Lexer
 
-sp1 :: Parser String
-sp1 = many1 space
+lexer :: T.TokenParser st
+lexer = T.makeTokenParser smlDef
 
-dropSpacesAfter :: Parser a -> Parser a
-dropSpacesAfter p = p >>= \ x -> spaces >> return x
+parens, braces, brackets :: Parser a -> Parser a
+parens      = T.parens lexer
+braces      = T.braces lexer
+brackets    = T.brackets lexer
 
-encloseBy :: Parser a -> (Char, Char) -> Parser a
-p `encloseBy` (s, e) = char s >> p >>= \ x -> char e >> return x
+lexeme :: Parser a -> Parser a
+lexeme      = T.lexeme lexer
+
+semi :: Parser String
+semi        = T.semi lexer
+
+reserved, reservedOp :: String -> Parser ()
+reserved    = T.reserved lexer
+reservedOp  = T.reservedOp lexer
+
+commaSep, semiSep1 :: Parser a -> Parser [a]
+commaSep    = T.commaSep lexer
+semiSep1    = T.semiSep1 lexer
+
+
