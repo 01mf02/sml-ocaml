@@ -94,6 +94,7 @@ data Expression =
   | BoolExp Expression BoolOp Expression
   | IfThenElseExp Expression Expression Expression
   | WhileDoExp Expression Expression
+  | CaseExp Expression Match
   deriving Show
 
 data BoolOp = AndAlso | OrElse deriving Show
@@ -108,7 +109,8 @@ instance ToOcaml Expression where
   toOcaml (BoolExp e1 op e2) = unwords [toOcaml e1, toOcaml op, toOcaml e2]
   toOcaml (IfThenElseExp i t e) =
     unwords ["if", toOcaml i, "then", toOcaml t, "else", toOcaml e]
-  toOcaml (WhileDoExp w d) = unwords ["while", toOcaml w, "do", toOcaml d]
+  toOcaml (WhileDoExp w d) = unwords ["while", toOcaml w, "do", toOcaml d, "done"]
+  toOcaml (CaseExp e m) = unwords ["match", toOcaml e, "with", toOcaml m]
 
 expression :: Parser Expression
 expression = detExpression >>= expression' where
@@ -116,6 +118,7 @@ expression = detExpression >>= expression' where
         liftM InfixExp infixExpression
     <|> ifThenElseExpression
     <|> whileDoExpression
+    <|> caseExpression
 
   ifThenElseExpression =
     reserved "if" >> expression >>= \ i ->
@@ -125,6 +128,10 @@ expression = detExpression >>= expression' where
   whileDoExpression =
     reserved "while" >> expression >>= \ w -> 
     reserved "do" >> expression >>= return . WhileDoExp w
+
+  caseExpression =
+    reserved "case" >> expression >>= \ e ->
+    reserved "of" >> match >>= return . CaseExp e
 
 
 expression' :: Expression -> Parser Expression
@@ -167,6 +174,17 @@ atomicExpression =
 
 -- -----------------------------------------------------------------------------
 -- Matches and Patterns
+
+newtype Match = Match [(Pattern, Expression)] deriving Show
+
+instance ToOcaml Match where
+  toOcaml (Match m) = unwords $ intercalate ["|"] $
+    map (\ (p, e) -> [toOcaml p, "->", toOcaml e]) m
+
+match :: Parser Match
+match = pe `sepBy1` reservedOp "|" >>= return . Match where
+  pe = pattrn >>= \ p -> reservedOp "=>" >> expression >>= \ e -> return (p, e)
+
 
 data Pattern = AtomicPat AtomicPattern
   deriving Show
