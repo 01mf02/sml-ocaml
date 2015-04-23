@@ -90,25 +90,50 @@ valDeclaration =
 
 data Expression =
     InfixExp InfixExpression
-  | ExpType (Expression, Type)
-  | IfThenElseExp (Expression, Expression, Expression)
+  | ExpType Expression Type
+  | BoolExp Expression BoolOp Expression
+  | IfThenElseExp Expression Expression Expression
+  | WhileDoExp Expression Expression
   deriving Show
+
+data BoolOp = AndAlso | OrElse deriving Show
+
+instance ToOcaml BoolOp where
+  toOcaml AndAlso = "&&"
+  toOcaml OrElse  = "||"
 
 instance ToOcaml Expression where
   toOcaml (InfixExp e) = toOcaml e
-  toOcaml (ExpType (e, t)) = toOcaml e ++ " : " ++ toOcaml t
-  toOcaml (IfThenElseExp (i, t, e)) =
+  toOcaml (ExpType e t) = toOcaml e ++ " : " ++ toOcaml t
+  toOcaml (BoolExp e1 op e2) = unwords [toOcaml e1, toOcaml op, toOcaml e2]
+  toOcaml (IfThenElseExp i t e) =
     unwords ["if", toOcaml i, "then", toOcaml t, "else", toOcaml e]
-
-detExpression :: Parser Expression
-detExpression =
-      liftM InfixExp infixExpression
-  <|> liftM IfThenElseExp ifThenElseExpression
+  toOcaml (WhileDoExp w d) = unwords ["while", toOcaml w, "do", toOcaml d]
 
 expression :: Parser Expression
-expression =
-      liftM ExpType expressionType
-  <|> detExpression
+expression = detExpression >>= expression' where
+  detExpression =
+        liftM InfixExp infixExpression
+    <|> ifThenElseExpression
+    <|> whileDoExpression
+
+  ifThenElseExpression =
+    reserved "if" >> expression >>= \ i ->
+    reserved "then" >> expression >>= \ t ->
+    reserved "else" >> expression >>= return . IfThenElseExp i t
+
+  whileDoExpression =
+    reserved "while" >> expression >>= \ w -> 
+    reserved "do" >> expression >>= return . WhileDoExp w
+
+
+expression' :: Expression -> Parser Expression
+expression' e = (choice opts >>= expression') <|> return e where
+  opts =
+    [ reservedOp ":" >> typ >>= \ t -> return $ ExpType e t
+    , reserved "andalso" >> expression >>= return . BoolExp e AndAlso
+    , reserved "orelse"  >> expression >>= return . BoolExp e OrElse
+    ]
 
 
 data InfixExpression = AtomicExps [AtomicExpression]
@@ -119,20 +144,6 @@ instance ToOcaml InfixExpression where
 
 infixExpression :: Parser InfixExpression
 infixExpression = liftM AtomicExps (many1 atomicExpression)
-
-expressionType :: Parser (Expression, Type)
-expressionType = try $
-  detExpression >>= \ e ->
-  reservedOp ":" >>
-  typ >>= \ t ->
-  return (e, t)
-
-ifThenElseExpression :: Parser (Expression, Expression, Expression)
-ifThenElseExpression =
-  reserved "if"   >> expression >>= \ i ->
-  reserved "then" >> expression >>= \ t ->
-  reserved "else" >> expression >>= \ e ->
-  return (i, t, e)
 
 
 data AtomicExpression =
