@@ -212,7 +212,8 @@ infixExpression = liftM AtomicExps (many1 atomicExpression)
 
 
 data AtomicExpression =
-     ConstExp Constant
+    CoNameExp CompoundName
+  |  ConstExp Constant
   |  TupleExp [Expression]
   |   ListExp [Expression]
   | RecordExp [(Label, Expression)]
@@ -220,14 +221,16 @@ data AtomicExpression =
 
 
 instance ToOcaml AtomicExpression where
-  toOcaml (ConstExp c) = toOcaml c
-  toOcaml (TupleExp es) = "(" ++ intercalate ", " (map toOcaml es) ++ ")"
-  toOcaml (ListExp  es) = "[" ++ intercalate "; " (map toOcaml es) ++ "]"
+  toOcaml (CoNameExp n) = toOcaml n
+  toOcaml ( ConstExp c) = toOcaml c
+  toOcaml ( TupleExp es) = "(" ++ intercalate ", " (map toOcaml es) ++ ")"
+  toOcaml (  ListExp es) = "[" ++ intercalate "; " (map toOcaml es) ++ "]"
   toOcaml (RecordExp le) = "{" ++ binariesSepBy "," "=" le ++ "}"
 
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
-      liftM  ConstExp constant
+      liftM CoNameExp compoundName
+  <|> liftM  ConstExp constant
   <|> liftM  TupleExp (parens   $ commaSep expression)
   <|> liftM   ListExp (brackets $ commaSep expression)
   <|> liftM RecordExp (braces   $ commaSep labelExpression)
@@ -260,14 +263,20 @@ instance ToOcaml Pattern where
 pattrn :: Parser Pattern
 pattrn = liftM AtomicPat atomicPattern
 
-data AtomicPattern = AnyPattern
+data AtomicPattern = AnyPat | CompoundPat CompoundName | ConstantPat Constant
   deriving Show
 
 instance ToOcaml AtomicPattern where
-  toOcaml AnyPattern = "_"
+  toOcaml AnyPat = "_"
+  toOcaml (CompoundPat c) = toOcaml c
+  toOcaml (ConstantPat c) = toOcaml c
 
 atomicPattern :: Parser AtomicPattern
-atomicPattern = reservedOp "_" >> return AnyPattern
+atomicPattern =
+      (reservedOp "_" >> return AnyPat)
+  <|> liftM CompoundPat compoundName
+  <|> liftM ConstantPat constant
+  <?> "atomic pattern"
 
 
 -- -----------------------------------------------------------------------------
@@ -292,6 +301,23 @@ typ =
 
 -- -----------------------------------------------------------------------------
 -- Lexical Matters: Identifiers, Constants, Comments
+
+compoundIdent :: Parser [String]
+compoundIdent = ident `sepBy1` char '.'
+
+
+data CompoundName = CoIdentNm [String] | CoOpNm String deriving Show
+
+instance ToOcaml CompoundName where
+  toOcaml (CoIdentNm i) = intercalate "." i
+  toOcaml (CoOpNm o) = o
+
+compoundName :: Parser CompoundName
+compoundName =
+      liftM CoIdentNm compoundIdent
+  <|> liftM CoOpNm (reserved "op" >> infixOperator)
+  <?> "compound name"
+  
 
 data Name = IdentNm String | OpNm String deriving Show
 
@@ -393,9 +419,7 @@ reserved, reservedOp :: String -> Parser ()
 reserved    = T.reserved lexer
 reservedOp  = T.reservedOp lexer
 
-commaSep, commaSep1, semiSep1 :: Parser a -> Parser [a]
+commaSep, commaSep1 :: Parser a -> Parser [a]
 commaSep    = T.commaSep  lexer
 commaSep1   = T.commaSep1 lexer
-semiSep1    = T.semiSep1  lexer
-
 
