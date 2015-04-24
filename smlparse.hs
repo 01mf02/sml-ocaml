@@ -217,6 +217,7 @@ data AtomicExpression =
   |  TupleExp [Expression]
   |   ListExp [Expression]
   | RecordExp [(Label, Expression)]
+  |    LetExp Declaration [Expression]
   deriving Show
 
 
@@ -226,6 +227,7 @@ instance ToOcaml AtomicExpression where
   toOcaml ( TupleExp es) = "(" ++ intercalate ", " (map toOcaml es) ++ ")"
   toOcaml (  ListExp es) = "[" ++ intercalate "; " (map toOcaml es) ++ "]"
   toOcaml (RecordExp le) = "{" ++ binariesSepBy "," "=" le ++ "}"
+  toOcaml (LetExp d e) = unwords [toOcaml d, "in", intercalate "; " (map toOcaml e)]
 
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
@@ -234,11 +236,17 @@ atomicExpression =
   <|> liftM  TupleExp (parens   $ commaSep expression)
   <|> liftM   ListExp (brackets $ commaSep expression)
   <|> liftM RecordExp (braces   $ commaSep labelExpression)
+  <|> letExpression
   <?> "atomic expression"
 
   where
     labelExpression =
       labl >>= \ l -> reservedOp "=" >> expression >>= \ e -> return (l, e)
+
+    letExpression =
+      reserved "let" >> declaration >>= \ d ->
+      reserved "in"  >> semiSep1 expression >>= \ e ->
+      reserved "end" >> return (LetExp d e)
 
 
 -- -----------------------------------------------------------------------------
@@ -419,7 +427,8 @@ reserved, reservedOp :: String -> Parser ()
 reserved    = T.reserved lexer
 reservedOp  = T.reservedOp lexer
 
-commaSep, commaSep1 :: Parser a -> Parser [a]
+commaSep, commaSep1, semiSep1 :: Parser a -> Parser [a]
 commaSep    = T.commaSep  lexer
 commaSep1   = T.commaSep1 lexer
+semiSep1    = T.semiSep1 lexer
 
