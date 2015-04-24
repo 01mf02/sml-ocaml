@@ -54,7 +54,7 @@ objectDeclaration = liftM Decl declaration
 -- -----------------------------------------------------------------------------
 -- Declarations
 
-data Declaration = ValDecls [VariableDeclaration]
+data Declaration = ValDecls [ValDeclaration]
   deriving Show
 
 instance ToOcaml Declaration where
@@ -63,25 +63,22 @@ instance ToOcaml Declaration where
 declaration :: Parser Declaration
 declaration = liftM ValDecls valDeclarations
 
-valDeclarations :: Parser [VariableDeclaration]
+valDeclarations :: Parser [ValDeclaration]
 valDeclarations = reserved "val" >> valDeclaration `sepBy1` reserved "and"
 
-newtype VariableDeclaration = VariableDeclaration (IsRec, Pattern, Expression)
+data ValDeclaration = ValDeclaration IsRec Pattern Expression
   deriving Show
 
-instance ToOcaml VariableDeclaration where
-  toOcaml (VariableDeclaration (IsRec r, p, e)) =
+instance ToOcaml ValDeclaration where
+  toOcaml (ValDeclaration (IsRec r) p e) =
     unwords $ (if r then ["rec"] else []) ++ [toOcaml p, "=", toOcaml e]
 
 newtype IsRec = IsRec Bool deriving Show
 
-valDeclaration :: Parser VariableDeclaration
+valDeclaration :: Parser ValDeclaration
 valDeclaration =
-  (IsRec <$> option False (reserved "rec" >> return True)) >>= \ rec ->
-  pattrn >>= \ pat ->
-  reservedOp "=" >>
-  expression >>= \ e ->
-  return (VariableDeclaration (rec, pat, e))
+  (IsRec <$> option False (reserved "rec" >> return True)) >>= \ r ->
+  pattrn >>= \ p -> reservedOp "=" >> expression >>= return . ValDeclaration r p
 
 
 
@@ -176,8 +173,8 @@ data AtomicExpression =
 
 instance ToOcaml AtomicExpression where
   toOcaml (ConstExp c) = toOcaml c
-  toOcaml (TupleExp es) = "(" ++ intercalate "," (map toOcaml es) ++ ")"
-  toOcaml (ListExp  es) = "(" ++ intercalate ";" (map toOcaml es) ++ ")"
+  toOcaml (TupleExp es) = "(" ++ intercalate ", " (map toOcaml es) ++ ")"
+  toOcaml (ListExp  es) = "[" ++ intercalate "; " (map toOcaml es) ++ "]"
 
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
