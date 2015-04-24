@@ -166,22 +166,29 @@ infixExpression = liftM AtomicExps (many1 atomicExpression)
 
 
 data AtomicExpression =
-    ConstExp Constant
-  | TupleExp [Expression]
-  |  ListExp [Expression]
+     ConstExp Constant
+  |  TupleExp [Expression]
+  |   ListExp [Expression]
+  | RecordExp [(Label, Expression)]
   deriving Show
 
 instance ToOcaml AtomicExpression where
   toOcaml (ConstExp c) = toOcaml c
   toOcaml (TupleExp es) = "(" ++ intercalate ", " (map toOcaml es) ++ ")"
   toOcaml (ListExp  es) = "[" ++ intercalate "; " (map toOcaml es) ++ "]"
+  toOcaml (RecordExp le) = "{" ++ intercalate ", " (map (\ (l, e) -> toOcaml l ++ " = " ++ toOcaml e) le) ++ "]"
 
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
-      liftM ConstExp constant
-  <|> liftM TupleExp (parens   $ commaSep expression)
-  <|> liftM  ListExp (brackets $ commaSep expression)
+      liftM  ConstExp constant
+  <|> liftM  TupleExp (parens   $ commaSep expression)
+  <|> liftM   ListExp (brackets $ commaSep expression)
+  <|> liftM RecordExp (braces   $ commaSep labelExpression)
   <?> "atomic expression"
+
+  where
+    labelExpression =
+      labl >>= \ l -> reservedOp "=" >> expression >>= \ e -> return (l, e)
 
 
 -- -----------------------------------------------------------------------------
@@ -238,13 +245,13 @@ data Constant =
   | StrConst String
   deriving Show
 
-type NumericConstant = (Numeral, Maybe Digits, Maybe Numeral)
+type NumericConstant = (Integer, Maybe Digits, Maybe Integer)
 
 type Digits = String
 
 instance ToOcaml Constant where
   toOcaml (NumConst (num, digits, e)) =
-    toOcaml num ++ maybe "" ("." ++) digits ++ maybe "" ("E" ++) (toOcaml <$> e)
+    show num ++ maybe "" ("." ++) digits ++ maybe "" ("E" ++) (show <$> e)
   toOcaml (StrConst s) = show s
 
 constant :: Parser Constant
@@ -261,23 +268,10 @@ numericConstant = lexeme $
   optionMaybe (char 'E' >> numeral) >>= \ e ->
   return (n, d, e)
 
-newtype Numeral = Numeral (NumeralSign, String) deriving Show
-
-instance ToOcaml Numeral where
-  toOcaml (Numeral (sign, num)) = toOcaml sign ++ num
-
-numeral :: Parser Numeral
-numeral = numeralSign >>= \ s -> many1 digit >>= \ d -> return $ Numeral (s, d)
-
-
-data NumeralSign = PosSign | NegSign deriving Show
-
-instance ToOcaml NumeralSign where
-  toOcaml PosSign = ""
-  toOcaml NegSign = "-"
-
-numeralSign :: Parser NumeralSign
-numeralSign = option PosSign (reservedOp "~" >> return NegSign)
+numeral :: Parser Integer
+numeral =
+  option id (reservedOp "~" >> return negate) >>= \ sign ->
+  decimal >>= return . sign
 
 
 typeVar :: Parser String
@@ -292,6 +286,15 @@ ident =
       T.operator lexer
   <|> alphanumericIdent
   <?> "identifier"
+
+data Label = IdentLbl String | DigitsLbl Integer deriving Show
+
+instance ToOcaml Label where
+  toOcaml (IdentLbl s) = s
+  toOcaml (DigitsLbl i) = show i
+
+labl :: Parser Label
+labl =  liftM IdentLbl ident <|> liftM DigitsLbl decimal
 
 alphanumericIdent :: Parser String
 alphanumericIdent = T.identifier lexer
@@ -310,6 +313,9 @@ brackets    = T.brackets lexer
 
 lexeme :: Parser a -> Parser a
 lexeme      = T.lexeme lexer
+
+decimal :: Parser Integer
+decimal     = T.decimal lexer
 
 semi :: Parser String
 semi        = T.semi lexer
