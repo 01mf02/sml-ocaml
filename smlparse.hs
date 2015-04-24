@@ -12,6 +12,11 @@ import Language (smlDef)
 class ToOcaml a where
   toOcaml :: a -> String
 
+binariesSepBy :: (ToOcaml l, ToOcaml r) => String -> String -> [(l, r)] -> String
+binariesSepBy sep op =
+  unwords . intercalate [sep] . map (\ (x, y) -> [toOcaml x, op, toOcaml y])
+
+
 type Parser = Parsec String ()
 
 -- -----------------------------------------------------------------------------
@@ -172,11 +177,12 @@ data AtomicExpression =
   | RecordExp [(Label, Expression)]
   deriving Show
 
+
 instance ToOcaml AtomicExpression where
   toOcaml (ConstExp c) = toOcaml c
   toOcaml (TupleExp es) = "(" ++ intercalate ", " (map toOcaml es) ++ ")"
   toOcaml (ListExp  es) = "[" ++ intercalate "; " (map toOcaml es) ++ "]"
-  toOcaml (RecordExp le) = "{" ++ intercalate ", " (map (\ (l, e) -> toOcaml l ++ " = " ++ toOcaml e) le) ++ "]"
+  toOcaml (RecordExp le) = "{" ++ binariesSepBy "," "=" le ++ "}"
 
 atomicExpression :: Parser AtomicExpression
 atomicExpression =
@@ -197,8 +203,7 @@ atomicExpression =
 newtype Match = Match [(Pattern, Expression)] deriving Show
 
 instance ToOcaml Match where
-  toOcaml (Match m) = unwords $ intercalate ["|"] $
-    map (\ (p, e) -> [toOcaml p, "->", toOcaml e]) m
+  toOcaml (Match m) = binariesSepBy "|" "->" m
 
 match :: Parser Match
 match = pe `sepBy1` reservedOp "|" >>= return . Match where
@@ -227,14 +232,20 @@ atomicPattern = reservedOp "_" >> return AnyPattern
 -- -----------------------------------------------------------------------------
 -- Types
 
-data Type = TypeVar String
+data Type = TypeVar String | RecordTy [(Label, Type)]
   deriving Show
 
 instance ToOcaml Type where
   toOcaml (TypeVar t) = t
+  toOcaml (RecordTy lt) = "{" ++ binariesSepBy ";" ":" lt ++ "}"
 
 typ :: Parser Type
-typ = liftM TypeVar typeVar
+typ =
+      liftM TypeVar typeVar
+  <|> parens typ
+  <|> liftM RecordTy (braces $ commaSep1 labelType)
+
+  where labelType = labl >>= \ l -> reservedOp ":" >> typ >>= \ t -> return (l, t)
 
 
 -- -----------------------------------------------------------------------------
@@ -324,8 +335,9 @@ reserved, reservedOp :: String -> Parser ()
 reserved    = T.reserved lexer
 reservedOp  = T.reservedOp lexer
 
-commaSep, semiSep1 :: Parser a -> Parser [a]
-commaSep    = T.commaSep lexer
-semiSep1    = T.semiSep1 lexer
+commaSep, commaSep1, semiSep1 :: Parser a -> Parser [a]
+commaSep    = T.commaSep  lexer
+commaSep1   = T.commaSep1 lexer
+semiSep1    = T.semiSep1  lexer
 
 
