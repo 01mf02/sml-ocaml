@@ -92,9 +92,12 @@ data Expression =
     InfixExp InfixExpression
   | ExpType Expression Type
   | BoolExp Expression BoolOp Expression
+  | HandleExp Expression Match
+  | RaiseExp Expression
   | IfThenElseExp Expression Expression Expression
   | WhileDoExp Expression Expression
   | CaseExp Expression Match
+  | FnExp Match
   deriving Show
 
 data BoolOp = AndAlso | OrElse deriving Show
@@ -105,20 +108,28 @@ instance ToOcaml BoolOp where
 
 instance ToOcaml Expression where
   toOcaml (InfixExp e) = toOcaml e
-  toOcaml (ExpType e t) = toOcaml e ++ " : " ++ toOcaml t
+  toOcaml (ExpType e t) = unwords [toOcaml e, ":", toOcaml t]
   toOcaml (BoolExp e1 op e2) = unwords [toOcaml e1, toOcaml op, toOcaml e2]
+  toOcaml (HandleExp e m) = unwords ["try", toOcaml e, "with", toOcaml m]
+  toOcaml (RaiseExp e) = unwords ["raise", toOcaml e]
   toOcaml (IfThenElseExp i t e) =
     unwords ["if", toOcaml i, "then", toOcaml t, "else", toOcaml e]
   toOcaml (WhileDoExp w d) = unwords ["while", toOcaml w, "do", toOcaml d, "done"]
   toOcaml (CaseExp e m) = unwords ["match", toOcaml e, "with", toOcaml m]
+  toOcaml (FnExp m) = unwords ["function", toOcaml m]
 
 expression :: Parser Expression
 expression = detExpression >>= expression' where
   detExpression =
         liftM InfixExp infixExpression
+    <|> raiseExpression
     <|> ifThenElseExpression
     <|> whileDoExpression
     <|> caseExpression
+    <|> fnExpression
+
+  raiseExpression =
+    reserved "raise" >> expression >>= return . RaiseExp
 
   ifThenElseExpression =
     reserved "if" >> expression >>= \ i ->
@@ -133,6 +144,9 @@ expression = detExpression >>= expression' where
     reserved "case" >> expression >>= \ e ->
     reserved "of" >> match >>= return . CaseExp e
 
+  fnExpression =
+    reserved "fn" >> match >>= return . FnExp
+
 
 expression' :: Expression -> Parser Expression
 expression' e = (choice opts >>= expression') <|> return e where
@@ -140,6 +154,7 @@ expression' e = (choice opts >>= expression') <|> return e where
     [ reservedOp ":" >> typ >>= \ t -> return $ ExpType e t
     , reserved "andalso" >> expression >>= return . BoolExp e AndAlso
     , reserved "orelse"  >> expression >>= return . BoolExp e OrElse
+    , reserved "handle"  >> match >>= return . HandleExp e
     ]
 
 
