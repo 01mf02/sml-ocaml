@@ -59,14 +59,20 @@ objectDeclaration = liftM Decl declaration
 -- -----------------------------------------------------------------------------
 -- Declarations
 
-data Declaration = ValDecls [ValDeclaration]
+data Declaration =
+    ValDecls [ValDeclaration]
+  | FunDecls [FunDeclaration]
   deriving Show
 
 instance ToOcaml Declaration where
   toOcaml (ValDecls ds) = "let " ++ intercalate " and " (map toOcaml ds)
+  toOcaml (FunDecls ds) = "let " ++ intercalate " and " (map toOcaml ds)
 
 declaration :: Parser Declaration
-declaration = liftM ValDecls valDeclarations
+declaration =
+      liftM ValDecls valDeclarations
+  <|> liftM FunDecls funDeclarations
+  <?> "declaration"
 
 valDeclarations :: Parser [ValDeclaration]
 valDeclarations = reserved "val" >> valDeclaration `sepBy1` reserved "and"
@@ -85,6 +91,40 @@ valDeclaration =
   (IsRec <$> option False (reserved "rec" >> return True)) >>= \ r ->
   pattrn >>= \ p -> reservedOp "=" >> expression >>= return . ValDeclaration r p
 
+
+funDeclarations :: Parser [FunDeclaration]
+funDeclarations = reserved "fun" >> funDeclaration `sepBy1` reserved "and"
+
+newtype FunDeclaration = FunDeclaration [FunDeclarationCase] deriving Show
+
+instance ToOcaml FunDeclaration where
+  toOcaml (FunDeclaration cs) = intercalate "|" $ map toOcaml cs
+
+funDeclaration :: Parser FunDeclaration
+funDeclaration = liftM FunDeclaration $ funDeclarationCase `sepBy1` reservedOp "|"
+
+data FunDeclarationCase = FunDeclarationCase FunHeading (Maybe Type) Expression
+  deriving Show
+
+instance ToOcaml FunDeclarationCase where
+  toOcaml (FunDeclarationCase h m e) = unwords $
+    toOcaml h : maybe [] (\ t -> [":", toOcaml t]) m ++ ["=", toOcaml e]
+
+funDeclarationCase :: Parser FunDeclarationCase
+funDeclarationCase =
+  funHeading >>= \ h ->
+  optionMaybe (reservedOp ":" >> typ) >>= \ t ->
+  reservedOp "=" >>
+  expression >>= return . FunDeclarationCase h t
+
+instance ToOcaml FunHeading where
+  toOcaml (NameFunHd n ps) = unwords $ toOcaml n : map toOcaml ps
+
+data FunHeading = NameFunHd Name [AtomicPattern]
+  deriving Show
+
+funHeading :: Parser FunHeading
+funHeading = name >>= \ n -> many1 atomicPattern >>= return . NameFunHd n
 
 
 -- -----------------------------------------------------------------------------
@@ -129,6 +169,7 @@ expression = detExpression >>= expression' where
     <|> whileDoExpression
     <|> caseExpression
     <|> fnExpression
+    <?> "expression"
 
   raiseExpression =
     reserved "raise" >> expression >>= return . RaiseExp
@@ -244,12 +285,29 @@ typ =
       liftM TypeVar typeVar
   <|> parens typ
   <|> liftM RecordTy (braces $ commaSep1 labelType)
+  <?> "type"
 
   where labelType = labl >>= \ l -> reservedOp ":" >> typ >>= \ t -> return (l, t)
 
 
 -- -----------------------------------------------------------------------------
 -- Lexical Matters: Identifiers, Constants, Comments
+
+data Name = IdentNm String | OpNm String deriving Show
+
+instance ToOcaml Name where
+  toOcaml (IdentNm i) = i
+  toOcaml (OpNm o) = o
+
+name :: Parser Name
+name =
+      liftM IdentNm ident
+  <|> liftM OpNm (reserved "op" >> infixOperator)
+  <?> "name"
+
+infixOperator :: Parser String
+infixOperator = ident
+
 
 data Constant =
     NumConst NumericConstant
