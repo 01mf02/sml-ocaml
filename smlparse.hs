@@ -32,7 +32,10 @@ program :: Parser Program
 program = liftM Program $ topLevelDeclaration `endBy1` semi
 
 
-data TopLevelDeclaration = Exp Expression | ObjDecl ObjectDeclaration
+data TopLevelDeclaration =
+    Exp Expression
+  | ObjDecl ObjectDeclaration
+  | FctDecl FunctorDeclaration
   deriving Show
 
 instance ToOcaml TopLevelDeclaration where
@@ -43,6 +46,7 @@ topLevelDeclaration :: Parser TopLevelDeclaration
 topLevelDeclaration =
       liftM Exp expression
   <|> liftM ObjDecl objectDeclaration
+  <|> liftM FctDecl functorDeclaration
   <?> "top level declaration"
 
 
@@ -55,6 +59,59 @@ instance ToOcaml ObjectDeclaration where
 objectDeclaration :: Parser ObjectDeclaration
 objectDeclaration = liftM Decl declaration
 
+
+newtype FunctorDeclaration = FunctorDeclaration [FunctorBinding] deriving Show
+
+functorDeclaration :: Parser FunctorDeclaration
+functorDeclaration = liftM FunctorDeclaration
+  (reserved "functor" >> functorBinding `sepBy1` reserved "and")
+
+data FunctorBinding = FctBinding String FunctorArguments (Maybe Signature) Structure
+  deriving Show
+
+functorBinding :: Parser FunctorBinding
+functorBinding =
+  ident >>= \ i ->
+  parens functorArguments >>= \ args ->
+  optionMaybe (reservedOp ":" >> signature) >>= \ sig ->
+  reservedOp "=" >>
+  structure >>= \ struct ->
+  return $ FctBinding i args sig struct
+
+data FunctorArguments = SpecArgs Specification | IdSigArgs String Signature
+  deriving Show
+
+functorArguments :: Parser FunctorArguments
+functorArguments =
+      liftM SpecArgs specification
+  <|> (ident >>= \ i -> reservedOp ":" >> signature >>= return . IdSigArgs i)
+  <?> "functor arguments"
+
+data Signature = SpecSig Specification | IdentSig String deriving Show
+
+signature :: Parser Signature
+signature =
+      (reserved "sig" >> specification >>= \ s -> reserved "end" >> return (SpecSig s))
+  <|> liftM IdentSig ident
+  <?> "signature"
+
+data Structure = ObjDeclStruct ObjectDeclaration
+  deriving Show
+
+structure :: Parser Structure
+structure =
+  reserved "struct" >> objectDeclaration >>= \ o -> reserved "end" >> return (ObjDeclStruct o)
+
+data ValSpec = ValSpec String Type deriving Show
+data Specification = ValSpecs [ValSpec]
+  deriving Show
+
+specification :: Parser Specification
+specification =
+      liftM ValSpecs (reserved "val" >> valSpec `sepBy1` reserved "and")
+  <?> "specification"
+  where
+    valSpec = ident >>= \ i -> reservedOp ":" >> typ >>= return . ValSpec i
 
 -- -----------------------------------------------------------------------------
 -- Declarations

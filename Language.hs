@@ -20,6 +20,6 @@ mlStyle = LanguageDef
 
 smlDef :: LanguageDef st
 smlDef = mlStyle
-  { reservedNames   = [ "and", "andalso", "case", "do", "else", "end", "fn", "fun", "function", "handle", "if", "in", "let", "of", "op", "orelse", "raise", "rec", "then", "try", "val", "while", "with" ]
+  { reservedNames   = [ "and", "andalso", "case", "do", "else", "end", "fn", "fun", "function", "functor", "handle", "if", "in", "let", "of", "op", "orelse", "raise", "rec", "sig", "struct", "then", "try", "val", "while", "with" ]
   , reservedOpNames = [ "=", "_", "~", ":", "=>", "|" ]
   }
